@@ -1,0 +1,99 @@
+# Lakeflow Job: the daily run of the whole lakehouse.
+#
+#   generate_data ─► run_pipeline ─► quality_gate ─► is_quality_ok?
+#                                                     ├─ true ─► city_reports (For each city)
+#                                                     └─ false ─► quality_alert (fails on purpose)
+#                                              run_summary  (Run if: ALL_DONE)
+
+resources:
+  jobs:
+    pedalhouse_daily:
+      name: pedalhouse-daily
+      description: Generate a day of data, run the pipeline, gate on quality, report per city.
+      max_concurrent_runs: 1
+      performance_target: STANDARD      # serverless: STANDARD (cheaper) or PERFORMANCE_OPTIMIZED
+      tags:
+        project: pedalhouse
+
+      # Job parameters: pushed down to every task as notebook widgets.
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+        - name: trips_per_city
+          default: "250"
+        - name: bad_rate              # try 0.25 to take the "false" branch
+          default: "0.04"
+        - name: max_bad_pct
+          default: "8"
+        - name: fail_city             # try "seoul" for the Repair run drill
+          default: none
+
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?"   # every day at 06:30
+        timezone_id: UTC
+        pause_status: PAUSED                     # dev mode pauses it anyway
+
+      tasks:
+        - task_key: generate_data
+          notebook_task:
+            notebook_path: ../src/jobs/01_generate_data.py
+
+        - task_key: run_pipeline
+          depends_on:
+            - task_key: generate_data
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.pedalhouse_pipeline.id}
+            full_refresh: false
+
+        - task_key: quality_gate
+          depends_on:
+            - task_key: run_pipeline
+          notebook_task:
+            notebook_path: ../src/jobs/02_quality_gate.py
+
+        - task_key: is_quality_ok
+          depends_on:
+            - task_key: quality_gate
+          condition_task:
+            op: EQUAL_TO
+            left: "{{tasks.quality_gate.values.quality_ok}}"
+            right: "true"
+
+        - task_key: city_reports
+          depends_on:
+            - task_key: is_quality_ok
+              outcome: "true"
+          for_each_task:
+            # The list of cities comes from a task value set by generate_data.
+            inputs: "{{tasks.generate_data.values.cities}}"
+            concurrency: 3
+            task:
+              task_key: city_report_iteration
+              notebook_task:
+                notebook_path: ../src/jobs/03_city_report.py
+                base_parameters:
+                  city: "{{input}}"
+
+        - task_key: quality_alert
+          depends_on:
+            - task_key: is_quality_ok
+              outcome: "false"
+          notebook_task:
+            notebook_path: ../src/jobs/04_quality_alert.py
+
+        - task_key: run_summary
+          depends_on:
+            - task_key: city_reports
+            - task_key: quality_alert
+          run_if: ALL_DONE
+          notebook_task:
+            notebook_path: ../src/jobs/05_run_summary.py
+            base_parameters:
+              job_run_id: "{{job.run_id}}"
+              job_start: "{{job.start_time.iso_datetime}}"

@@ -1,0 +1,24 @@
+# Lakeflow Spark Declarative Pipeline: bronze -> silver -> gold.
+# Every .sql and .py file under src/pipeline is part of the pipeline; the
+# engine reads them all and works out the execution order from the table
+# references (the DAG), so file order does not matter.
+
+resources:
+  pipelines:
+    pedalhouse_pipeline:
+      name: pedalhouse-pipeline
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      continuous: false            # triggered: process what is new, then stop
+      root_path: ../src/pipeline
+      libraries:
+        - glob:
+            include: ../src/pipeline/**
+      configuration:
+        # Read in SQL as ${landing_path}, in Python as spark.conf.get("landing_path")
+        landing_path: /Volumes/${var.catalog}/${var.schema}/landing
+        # Lets the Python files import the tested package in src/pedalhouse
+        src_path: ${workspace.file_path}/src
+      tags:
+        project: pedalhouse

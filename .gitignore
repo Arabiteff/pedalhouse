@@ -1,0 +1,19 @@
+# Databricks bundles
+.databricks/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Spark / Delta local test output
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

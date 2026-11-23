@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:          # the "Run workflow" button: deploys to prod
+
+jobs:
+  unit-tests:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests (local Spark + Delta Lake)
+        run: pytest -v
+
+  bundle-validate:
+    name: Validate the bundle
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+
+      - name: databricks bundle validate
+        if: env.DATABRICKS_HOST != ''
+        run: databricks bundle validate -t dev
+
+      - name: Secrets not configured
+        if: env.DATABRICKS_HOST == ''
+        run: echo "::notice::Add the DATABRICKS_HOST and DATABRICKS_TOKEN repository secrets to validate the bundle against your workspace."
+
+  deploy-prod:
+    name: Deploy to prod
+    if: github.event_name == 'workflow_dispatch'
+    needs: [unit-tests, bundle-validate]
+    runs-on: ubuntu-latest
+    environment: production     # add required reviewers on this environment in GitHub
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle deploy -t prod
+      - run: databricks bundle summary -t prod

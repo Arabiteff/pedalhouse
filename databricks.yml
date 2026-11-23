@@ -1,0 +1,47 @@
+# =============================================================================
+# Pedalhouse: Declarative Automation Bundle (formerly Databricks Asset Bundles)
+# -----------------------------------------------------------------------------
+# This file turns the whole project into code you can review, version and
+# deploy the same way to every environment:
+#
+#   databricks bundle validate            # check the configuration
+#   databricks bundle deploy  -t dev      # deploy to your dev schema
+#   databricks bundle run pedalhouse_daily -t dev
+#   databricks bundle deploy  -t prod     # same code, prod settings
+#
+# You can also deploy from the workspace UI: open this folder from a Git
+# folder and use the "Deployments" (rocket) panel.
+# =============================================================================
+
+bundle:
+  name: pedalhouse
+
+include:
+  - resources/*.yml
+
+# Variables are the only thing that changes between environments.
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds the Pedalhouse schema.
+    default: workspace
+  schema:
+    description: Schema (database) for every Pedalhouse table and volume.
+    default: pedalhouse_dev
+
+targets:
+  # Development: resources are prefixed with "[dev <your name>]", schedules
+  # and triggers are paused, and the pipeline runs in development mode.
+  dev:
+    mode: development
+    default: true
+    variables:
+      schema: pedalhouse_dev
+
+  # Production: same code, its own schema, deployed to a fixed path.
+  # In a team, CI/CD deploys this target with a service principal.
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      schema: pedalhouse
